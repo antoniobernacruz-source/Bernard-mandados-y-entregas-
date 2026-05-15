@@ -1,0 +1,6 @@
+{
+  "name": "BERNARD - Mandados y Entregas",
+  "description": "Servicio profesional de mandados y gestión de reparto en Huajuapan de León, Oaxaca. Seguimiento en tiempo real y mapas interactivos.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["real-time-tracking", "delivery-management"]
+}

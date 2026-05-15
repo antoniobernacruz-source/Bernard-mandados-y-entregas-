@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User document validation
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.email is string &&
+             data.role in ['client', 'driver', 'admin'] &&
+             data.keys().hasAll(['uid', 'email', 'role']);
+    }
+
+    // Order document validation
+    function isValidOrder(data) {
+      return data.clientId is string &&
+             data.status in ['pending', 'accepted', 'picked_up', 'delivered', 'cancelled'] &&
+             data.type in ['delivery', 'errand'] &&
+             data.paymentMethod in ['cash', 'card', 'transfer'] &&
+             data.description is string &&
+             data.description.size() <= 1000;
+    }
+
+    // User operations
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && (resource.data.role == 'driver' || isOwner(userId));
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && 
+                      isValidUser(request.resource.data) &&
+                      request.resource.data.role == resource.data.role; // Role is immutable
+    }
+
+    // Order operations
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && (
+        resource.data.clientId == request.auth.uid || 
+        resource.data.driverId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver'
+      );
+      
+      allow list: if isSignedIn() && (
+        resource.data.clientId == request.auth.uid || 
+        resource.data.driverId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver'
+      );
+
+      allow create: if isSignedIn() && 
+                    request.resource.data.clientId == request.auth.uid &&
+                    isValidOrder(request.resource.data);
+
+      allow update: if isSignedIn() && (
+        // Client can cancel or edit description of their own pending orders
+        (resource.data.clientId == request.auth.uid && 
+         resource.data.status == 'pending' &&
+         request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'description', 'updatedAt'])) ||
+        // Driver can accept or update status of orders
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver' && (
+          // Accept action
+          (resource.data.status == 'pending' && 
+           request.resource.data.status == 'accepted' && 
+           request.resource.data.driverId == request.auth.uid) ||
+          // Status updates while owner
+          (resource.data.driverId == request.auth.uid && 
+           request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'updatedAt']))
+        ))
+      );
+    }
+  }
+}
